@@ -1,4 +1,4 @@
-# app.py
+# app.py - Versão completa com coluna de servidores
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -22,6 +22,13 @@ def init_database():
     conn = sqlite3.connect('ordens_servico.db')
     cursor = conn.cursor()
     
+    # Verificar se a coluna servidores existe, se não, adicionar
+    cursor.execute("PRAGMA table_info(ordens_servico)")
+    columns = [col[1] for col in cursor.fetchall()]
+    
+    if 'servidores' not in columns:
+        cursor.execute("ALTER TABLE ordens_servico ADD COLUMN servidores TEXT")
+    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ordens_servico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +42,7 @@ def init_database():
             tipo_acao TEXT NOT NULL,
             situacao TEXT DEFAULT 'Vigente',
             observacao TEXT,
+            servidores TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -58,6 +66,7 @@ def carregar_dados():
             df['comunidade'] = df['comunidade'].astype(str)
             df['tipo_acao'] = df['tipo_acao'].astype(str)
             df['situacao'] = df['situacao'].astype(str)
+            df['servidores'] = df['servidores'].fillna('').astype(str)
             
             # Converter datas
             df['data_publicacao'] = pd.to_datetime(df['data_publicacao'], errors='coerce')
@@ -81,7 +90,7 @@ def carregar_dados():
         st.error(f"Erro ao carregar dados: {e}")
         return pd.DataFrame()
 
-def inserir_ordem(sei_numero, processo, comunidade, municipio, data_publicacao, prazo_dias, tipo_acao, situacao, observacao):
+def inserir_ordem(sei_numero, processo, comunidade, municipio, data_publicacao, prazo_dias, tipo_acao, situacao, observacao, servidores):
     """Insere uma nova ordem de serviço"""
     try:
         conn = sqlite3.connect('ordens_servico.db')
@@ -104,10 +113,12 @@ def inserir_ordem(sei_numero, processo, comunidade, municipio, data_publicacao, 
         
         cursor.execute('''
             INSERT INTO ordens_servico 
-            (sei_numero, processo, comunidade, municipio, data_publicacao, prazo_dias, data_termino, tipo_acao, situacao, observacao)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (sei_numero, processo, comunidade, municipio, data_publicacao, prazo_dias, 
+             data_termino, tipo_acao, situacao, observacao, servidores)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (str(sei_numero), str(processo), str(comunidade), str(municipio) if municipio else None, 
-              data_publicacao, prazo_int, data_termino, str(tipo_acao), str(situacao), str(observacao) if observacao else None))
+              data_publicacao, prazo_int, data_termino, str(tipo_acao), str(situacao), 
+              str(observacao) if observacao else None, str(servidores) if servidores else None))
         
         conn.commit()
         conn.close()
@@ -116,7 +127,7 @@ def inserir_ordem(sei_numero, processo, comunidade, municipio, data_publicacao, 
         st.error(f"Erro ao inserir ordem: {e}")
         return False
 
-def atualizar_ordem(id, sei_numero, processo, comunidade, municipio, data_publicacao, prazo_dias, tipo_acao, situacao, observacao):
+def atualizar_ordem(id, sei_numero, processo, comunidade, municipio, data_publicacao, prazo_dias, tipo_acao, situacao, observacao, servidores):
     """Atualiza uma ordem de serviço existente"""
     try:
         conn = sqlite3.connect('ordens_servico.db')
@@ -140,11 +151,12 @@ def atualizar_ordem(id, sei_numero, processo, comunidade, municipio, data_public
         cursor.execute('''
             UPDATE ordens_servico 
             SET sei_numero=?, processo=?, comunidade=?, municipio=?, data_publicacao=?, 
-                prazo_dias=?, data_termino=?, tipo_acao=?, situacao=?, observacao=?, updated_at=CURRENT_TIMESTAMP
+                prazo_dias=?, data_termino=?, tipo_acao=?, situacao=?, observacao=?, 
+                servidores=?, updated_at=CURRENT_TIMESTAMP
             WHERE id=?
         ''', (str(sei_numero), str(processo), str(comunidade), str(municipio) if municipio else None, 
               data_publicacao, prazo_int, data_termino, str(tipo_acao), str(situacao), 
-              str(observacao) if observacao else None, int(id)))
+              str(observacao) if observacao else None, str(servidores) if servidores else None, int(id)))
         
         conn.commit()
         conn.close()
@@ -185,24 +197,6 @@ def atualizar_situacoes():
     except Exception as e:
         st.error(f"Erro ao atualizar situações: {e}")
         return False
-
-def color_dataframe(df):
-    """Aplica cores ao DataFrame baseado na situação e dias restantes"""
-    # Criar um clone para estilização
-    styled_df = df.copy()
-    
-    # Função para obter cor da linha
-    def get_row_color(row):
-        if row['situacao'] == 'Vencida':
-            return ['background-color: #f8d7da; color: #721c24'] * len(row)
-        elif row['situacao'] == 'Vigente':
-            if 'dias_restantes' in row and row['dias_restantes'] <= 15:
-                return ['background-color: #fff3cd; color: #856404'] * len(row)
-            else:
-                return ['background-color: #d4edda; color: #155724'] * len(row)
-        return [''] * len(row)
-    
-    return styled_df.style.apply(get_row_color, axis=1)
 
 # ==================== INTERFACE PRINCIPAL ====================
 
@@ -302,8 +296,6 @@ if menu == "📊 Dashboard":
     else:
         st.info("Nenhuma ordem vigente para exibir")
 
-# app.py - Substitua apenas a seção "LISTAR ORDENS" pelo código abaixo
-
 # ==================== LISTAR ORDENS ====================
 elif menu == "📋 Listar Ordens":
     st.header("📋 Lista de Ordens de Serviço")
@@ -345,14 +337,15 @@ elif menu == "📋 Listar Ordens":
             linhas_por_pagina = st.selectbox(
                 "Linhas por página:", 
                 [10, 20, 50, 100, 200, "Todos"],
-                index=1  # índice 1 = 20 linhas
+                index=1  # índice 1 = 20 linhas (padrão)
             )
         
         # Exibir tabela com cores
         if not df_filtrado.empty:
-            # Preparar dados para exibição
+            # Preparar dados para exibição - incluindo servidores
             colunas_exibir = ['id', 'sei_numero', 'processo', 'comunidade', 'municipio', 
-                              'data_publicacao', 'prazo_dias', 'data_termino', 'tipo_acao', 'situacao', 'dias_restantes']
+                              'data_publicacao', 'prazo_dias', 'data_termino', 
+                              'tipo_acao', 'situacao', 'dias_restantes', 'servidores']
             
             df_exibir = df_filtrado[colunas_exibir].copy()
             
@@ -360,6 +353,7 @@ elif menu == "📋 Listar Ordens":
             df_exibir['data_publicacao'] = pd.to_datetime(df_exibir['data_publicacao']).dt.strftime('%d/%m/%Y')
             df_exibir['data_termino'] = pd.to_datetime(df_exibir['data_termino']).dt.strftime('%d/%m/%Y') if 'data_termino' in df_exibir.columns else ''
             df_exibir['dias_restantes'] = df_exibir['dias_restantes'].fillna(0).astype(int)
+            df_exibir['servidores'] = df_exibir['servidores'].fillna('').astype(str)
             
             # Aplicar limite de linhas
             if linhas_por_pagina != "Todos":
@@ -432,6 +426,8 @@ elif menu == "➕ Cadastrar Ordem":
             ])
         
         situacao = st.selectbox("Situação", ["Vigente", "Vencida"])
+        servidores = st.text_area("Servidores Responsáveis", height=100, 
+                                   help="Liste os servidores designados, separados por vírgula")
         observacao = st.text_area("Observação", height=100)
         
         submitted = st.form_submit_button("✅ Cadastrar", use_container_width=True)
@@ -443,7 +439,7 @@ elif menu == "➕ Cadastrar Ordem":
                 sucesso = inserir_ordem(
                     sei_numero, processo, comunidade, municipio, 
                     data_publicacao.strftime('%Y-%m-%d'), prazo_dias, 
-                    tipo_acao, situacao, observacao
+                    tipo_acao, situacao, observacao, servidores
                 )
                 if sucesso:
                     st.success(f"Ordem {sei_numero} cadastrada com sucesso!")
@@ -493,7 +489,13 @@ elif menu == "✏️ Alterar Ordem":
                 
                 situacao = st.selectbox("Situação", ["Vigente", "Vencida"], 
                                         index=0 if ordem['situacao'] == 'Vigente' else 1)
-                observacao = st.text_area("Observação", value=str(ordem['observacao']) if pd.notna(ordem['observacao']) else "", height=100)
+                servidores = st.text_area("Servidores Responsáveis", 
+                                          value=str(ordem['servidores']) if pd.notna(ordem['servidores']) else "", 
+                                          height=100,
+                                          help="Liste os servidores designados, separados por vírgula")
+                observacao = st.text_area("Observação", 
+                                          value=str(ordem['observacao']) if pd.notna(ordem['observacao']) else "", 
+                                          height=100)
                 
                 submitted = st.form_submit_button("💾 Salvar Alterações", use_container_width=True)
                 
@@ -503,7 +505,8 @@ elif menu == "✏️ Alterar Ordem":
                     else:
                         sucesso = atualizar_ordem(
                             ordem_selecionada, sei_numero, processo, comunidade, municipio,
-                            data_publicacao.strftime('%Y-%m-%d'), prazo_dias, tipo_acao, situacao, observacao
+                            data_publicacao.strftime('%Y-%m-%d'), prazo_dias, tipo_acao, 
+                            situacao, observacao, servidores
                         )
                         if sucesso:
                             st.success(f"Ordem {sei_numero} atualizada com sucesso!")
@@ -531,8 +534,10 @@ elif menu == "🗑️ Excluir Ordem":
             with col1:
                 st.write(f"**SEI:** {ordem['sei_numero']}")
                 st.write(f"**Comunidade:** {ordem['comunidade']}")
-            with col2:
                 st.write(f"**Processo:** {ordem['processo']}")
+            with col2:
+                st.write(f"**Data Publicação:** {pd.to_datetime(ordem['data_publicacao']).strftime('%d/%m/%Y') if pd.notna(ordem['data_publicacao']) else 'N/A'}")
+                st.write(f"**Data Término:** {pd.to_datetime(ordem['data_termino']).strftime('%d/%m/%Y') if pd.notna(ordem['data_termino']) else 'Sem prazo'}")
                 st.write(f"**Situação:** {ordem['situacao']}")
             
             confirmar = st.checkbox("Confirmo que desejo excluir esta ordem permanentemente")
