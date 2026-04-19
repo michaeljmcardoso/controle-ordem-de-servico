@@ -45,4 +45,6 @@ Thumbs.db
 data/*.csv
 !data/.gitkeep
 
+seed.py
+
 controle-de-ordem-de-servico/
